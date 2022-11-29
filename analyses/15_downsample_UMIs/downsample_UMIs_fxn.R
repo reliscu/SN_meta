@@ -29,9 +29,7 @@ downsample_UMIs <- function(datinfo, data_type, expr_type, n_umis_list){
           replace <- T
         }
         
-        downsample <- table(
-          sample(rep(genes, times=expr[,i]), size=n_umis_list[j], replace=replace)
-        )
+        downsample <- table(sample(rep(genes, times=expr[,i]), size=n_umis_list[j], replace=replace))
         downsample <- downsample[match(genes, names(downsample))]
         
         return(data.frame(as.numeric(downsample)))
