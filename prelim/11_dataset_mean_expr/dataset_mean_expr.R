@@ -15,7 +15,7 @@ future_lapply(1:nrow(datinfo), FUN=function(i){
   
   expr <- fread(datinfo$Author_Normalized_Counts_QC_Intersection_PC_Genes[i], data.table=F)
   genes <- expr[,c(1)]
-  mean_expr <- rowMeans(expr)
+  mean_expr <- rowMeans(expr[,-c(1)])
   expr_out <- data.frame(SYMBOL=genes, Mean_Expr=mean_expr)
   
   file_path <- gsub("9_normalize", "11_dataset_mean_expr", datinfo$Author_Normalized_Counts_QC_Intersection_PC_Genes[i])
