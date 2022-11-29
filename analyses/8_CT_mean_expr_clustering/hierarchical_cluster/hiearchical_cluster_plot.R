@@ -1,0 +1,155 @@
+library(ggdendro)
+library(dendextend)
+library(pheatmap)
+library(RColorBrewer)
+library(data.table)
+library(dplyr)
+library(propr)
+library(igraph) ## compare()
+library(dynamicTreeCut)  ## cutreeDynamic()
+library(scales) ## comma()
+
+source("/home/rebecca/code/misc/upper_first.R")
+source("/home/rebecca/SCSN_meta_analysis/code/brewer_fxn.R")
+source("/home/rebecca/SCSN_meta_analysis/code/prep_CT_data_fxn.R")
+source("/home/rebecca/SCSN_meta_analysis/code/cell_class_full_name_fxn.R")
+#source("/home/rebecca/SCSN_meta_analysis/code/clust_metric_fxns.R")
+
+plot_dendro <- function(
+  ct_expr, 
+  datinfo, 
+  data_type=c("author_data"), 
+  expr_type=c("counts", "normalized_counts"), 
+  which_genes=c("intersection", "union"), 
+  gene_list=NULL, 
+  sim_type, 
+  prop_metric=c("rho", "phs"), 
+  clust_method, 
+  top_n=NULL, 
+  n_clusters
+){
+
+  ct_data <- prep_CT_data(
+    datinfo, 
+    ct_df=ct_expr, 
+    expr_type, 
+    which_genes, 
+    pc_genes=T, 
+    top_n, 
+    ct_expr=NULL
+  )
+  
+  datinfo <- ct_data[[1]]
+  ct_expr <- ct_data[[2]]
+  
+  if(!is.null(gene_list)){
+    ct_expr <- ct_expr[is.element(ct_expr$SYMBOL, gene_list),]
+  }
+  
+  if(is.null(top_n)){
+    
+    n_genes <- nrow(ct_expr)
+    
+  } else {
+    
+    n_genes <- paste("top", nrow(ct_expr), sep="_")
+    
+  }
+  
+  n_cts <- length(unique(paste(datinfo$Study, datinfo$Cell_Type)))
+
+  if(sim_type=="prop"){
+    
+    sim <- propr(ct_expr[,-c(1)], metric=prop_metric, symmetrize=T, p=1)@matrix
+    sim_type <- paste(sim_type, prop_metric, sep="_")
+    if(grepl("ph", prop_metric)){ # phs and phi are already distance measures
+      sim <- 1-sim
+    }
+    
+  } else {
+    sim <- cor(ct_expr[,-c(1)], method=sim_type, use="pairwise.complete.obs")
+  }
+  
+  clust <- stats::hclust(
+    as.dist(1-sim), method=clust_method
+  )
+  
+  dendro <- as.dendrogram(clust)
+  
+  dendro_info <- ggdendro::dendro_data(dendro)
+  datinfo <- datinfo[match(make.names(dendro_info$labels$label), datinfo$Label),] ## Make sure metadata matches order of dendrogram x-axis
+  labels(dendro) <- datinfo$Plot_Label_CT ## Assign plot-friendly labels to dendrogram leafs
+  dendro <- dendextend::set(dendro, "labels_cex", .4) ## Set dendrogram leaf font size
+
+  true_labs <- datinfo$Cell_Class
+  cell_classes <- unique(true_labs)
+  clust_labs <- stats::cutree(clust, k=n_clusters)
+  clust_labs <- clust_labs[match(datinfo$Label, make.names(names(clust_labs)))] ## Ensure cell type cluster assignment vector matches datinfo
+  
+  nmi_idx <- signif(igraph::compare(true_labs, clust_labs, method="nmi"), 2)
+  rand_idx <- signif(igraph::compare(true_labs, clust_labs, method="rand"), 2)
+  clust_metrics <- paste0("NMI=", nmi_idx, ", RAND=", rand_idx)
+  
+  pdf(file=paste0("figures/", data_type, "/", expr_type, "/CT_mean_expr_dendrogram_", n_clusters, "_clusters_", data_type, "_", expr_type, "_", toupper(sim_type), "_", toupper(clust_method), "_", n_cts, "_CTs_", n_distinct(datinfo$Dataset), "_datasets_", n_genes, "_intersection_genes.pdf"), width=14, height=10)
+  
+  color_var <- "Cell_Class"; color_lab <- "Cell Class"
+  dendro_template(datinfo, dendro, clust, clust_metrics, color_var, color_lab, n_genes=nrow(ct_expr), n_cts)
+  
+  color_var <- "Platform"; color_lab <- "Platform"
+  dendro_template(datinfo, dendro, clust, clust_metrics, color_var, color_lab, n_genes=nrow(ct_expr), n_cts)
+  
+  color_var <- "Study"; color_lab <- "Study"
+  dendro_template(datinfo, dendro, clust, clust_metrics, color_var, color_lab, n_genes=nrow(ct_expr), n_cts)
+  
+  dev.off()
+  
+}
+
+dendro_template <- function(datinfo, dendro, clust, clust_metrics, color_var, color_lab, n_genes, n_cts){
+  
+  plot_title <- "Cell Type Mean Expression Clustering"
+  plot_sub <- paste(comma(n_cts), "cell types found in", n_distinct(datinfo$Dataset), "datasets from", n_distinct(datinfo$Study), "studies\n", comma(n_genes), "protein coding genes")
+  
+  n_elements <- n_distinct(datinfo[,color_var])
+  
+  if(n_elements==2){
+    color_vals <- c("#3492EA", "#D92F4B")
+  } else if(n_elements<8){
+    color_vals <- brewer.pal(n_elements, "Set1")
+  } else {
+    color_vals <- brewer_fxn(n_elements)
+  }
+  
+  temp <- cbind(unique(datinfo[,color_var]), color_vals)
+  idx <- match(datinfo[,color_var], temp[,1])
+  dendextend::labels_colors(dendro) <- color_vals[idx]
+  
+  if(sim_type=="pearson"){
+    
+    y_lab <- upper_first(sim_type)
+    
+  } else if(sim_type=="prop"){
+    
+    y_lab <- "Proportionality"
+    
+  } else {
+    
+    y_lab <- "Cosine"
+    
+  }
+  
+  n_col <- 1; h <- T; y <- -.8
+  if(color_var=="Platform"){
+    n_col <- 4; h <- F; y <- -.8
+  }  else if(n_distinct(dendextend::labels_colors(dendro))>=10){
+    n_col <- 4; h <- F; y <- -.9
+  }
+  
+  par(mar=c(23, 5, 4, 2), xpd=T)
+  plot(dendro, main=plot_title, ylab=paste0("1-", y_lab))
+  rect.hclust(tree=clust, k=n_clusters)
+  mtext(paste(n_clusters, "clusters,", paste0(clust_metrics, ","), clust_method, "linkage"), side=3, line=-.25)
+  mtext(plot_sub, side=1, line=10, cex=1.2)
+  legend("bottom", title=color_lab, legend=unique(datinfo[,color_var]), col=color_vals, ncol=n_col, pch=c(20, 20, 20, 20), bty="n", pt.cex=3, cex=1.2, text.col="black", horiz=h, inset=c(.8, y))
+  
+}
